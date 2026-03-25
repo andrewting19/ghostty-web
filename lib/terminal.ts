@@ -725,18 +725,29 @@ export class Terminal implements ITerminalCore {
   reset(): void {
     this.assertOpen();
 
-    // Free old WASM terminal and create new one
-    if (this.wasmTerm) {
-      this.wasmTerm.free();
+    // Cancel the render loop while we swap out the WASM terminal handle.
+    // Without this, a rAF callback can fire between free() and createTerminal()
+    // and access a dangling handle, causing a WASM trap / infinite loop.
+    this.cancelRenderLoop();
+
+    try {
+      // Free old WASM terminal and create new one
+      if (this.wasmTerm) {
+        this.wasmTerm.free();
+      }
+      const config = this.buildWasmConfig();
+      this.wasmTerm = this.ghostty!.createTerminal(this.cols, this.rows, config);
+
+      // Clear renderer
+      this.renderer!.clear();
+
+      // Reset title
+      this.currentTitle = '';
+    } catch (err) {
+      console.error('ghostty-web: reset() failed:', err);
     }
-    const config = this.buildWasmConfig();
-    this.wasmTerm = this.ghostty!.createTerminal(this.cols, this.rows, config);
 
-    // Clear renderer
-    this.renderer!.clear();
-
-    // Reset title
-    this.currentTitle = '';
+    this.startRenderLoop();
   }
 
   /**
@@ -1161,21 +1172,40 @@ export class Terminal implements ITerminalCore {
    */
   private startRenderLoop(): void {
     if (this.animationFrameId) return; // already running
+    let consecutiveErrors = 0;
     const loop = () => {
       if (!this.isDisposed && this.isOpen) {
-        // Render using WASM's native dirty tracking
-        // The render() method:
-        // 1. Calls update() once to sync state and check dirty flags
-        // 2. Only redraws dirty rows when forceAll=false
-        // 3. Always calls clearDirty() at the end
-        this.renderer!.render(this.wasmTerm!, false, this.viewportY, this, this.scrollbarOpacity);
+        try {
+          if (!this.wasmTerm || !this.renderer) {
+            this.animationFrameId = requestAnimationFrame(loop);
+            return;
+          }
+          // Render using WASM's native dirty tracking
+          // The render() method:
+          // 1. Calls update() once to sync state and check dirty flags
+          // 2. Only redraws dirty rows when forceAll=false
+          // 3. Always calls clearDirty() at the end
+          this.renderer.render(this.wasmTerm, false, this.viewportY, this, this.scrollbarOpacity);
 
-        // Check for cursor movement (Phase 2: onCursorMove event)
-        // Note: getCursor() reads from already-updated render state (from render() above)
-        const cursor = this.wasmTerm!.getCursor();
-        if (cursor.y !== this.lastCursorY) {
-          this.lastCursorY = cursor.y;
-          this.cursorMoveEmitter.fire();
+          // Check for cursor movement (Phase 2: onCursorMove event)
+          // Note: getCursor() reads from already-updated render state (from render() above)
+          const cursor = this.wasmTerm.getCursor();
+          if (cursor.y !== this.lastCursorY) {
+            this.lastCursorY = cursor.y;
+            this.cursorMoveEmitter.fire();
+          }
+
+          consecutiveErrors = 0;
+        } catch (err) {
+          consecutiveErrors++;
+          if (consecutiveErrors <= 3) {
+            console.error('ghostty-web render error:', err);
+          }
+          if (consecutiveErrors > 60) {
+            // Persistent render failures — stop the loop to avoid burning CPU
+            console.error('ghostty-web: too many consecutive render errors, stopping render loop');
+            return;
+          }
         }
 
         // Note: onRender event is intentionally not fired in the render loop
