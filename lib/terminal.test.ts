@@ -301,6 +301,29 @@ describe('Terminal', () => {
       term.dispose();
     });
 
+    test('reset() rebinds helper state to the new wasm terminal', async () => {
+      const term = await createIsolatedTerminal();
+      term.open(container!);
+
+      const oldWasmTerm = term.wasmTerm;
+      const selectionManager = (term as any).selectionManager;
+      const inputHandler = (term as any).inputHandler;
+
+      term.write('\x1b[?1000h');
+      expect(inputHandler.mouseConfig.hasMouseTracking()).toBe(true);
+
+      term.reset();
+
+      expect(term.wasmTerm).toBeDefined();
+      expect(term.wasmTerm).not.toBe(oldWasmTerm);
+      expect(selectionManager.wasmTerm).toBe(term.wasmTerm);
+
+      term.write('\x1b[?1000h');
+      expect(inputHandler.mouseConfig.hasMouseTracking()).toBe(true);
+
+      term.dispose();
+    });
+
     test('focus() does not throw', async () => {
       const term = await createIsolatedTerminal();
       term.open(container!);

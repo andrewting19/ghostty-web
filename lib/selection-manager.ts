@@ -114,6 +114,11 @@ export class SelectionManager {
     this.attachEventListeners();
   }
 
+  setWasmTerm(wasmTerm: GhosttyTerminal): void {
+    this.wasmTerm = wasmTerm;
+    this.clearSelection();
+  }
+
   // ==========================================================================
   // Public API
   // ==========================================================================

@@ -1589,3 +1589,13 @@ index b6430ea34..10e0ef79d 100644
              if (t.modes.get(.reverse_colors)) {
                  self.colors.background = fg;
                  self.colors.foreground = bg;
+@@ -403,6 +404,9 @@ pub const RenderState = struct {
+         var y: size.CellCountInt = 0;
+         var any_dirty: bool = false;
+         while (row_it.next()) |row_pin| : (y = y + 1) {
++            // Safety bounds check: break if iterator exceeds expected rows.
++            // Protects against corrupt linked-list pointers causing infinite loops.
++            if (y >= self.rows) break;
+             // Find our cursor if we haven't found it yet. We do this even
+             // if the row is not dirty because the cursor is unrelated.
+             if (self.cursor.viewport == null and

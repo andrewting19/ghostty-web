@@ -370,10 +370,12 @@ export class GhosttyTerminal {
   write(data: string | Uint8Array): void {
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
     if (!this.handle || bytes.length === 0) return;
+    console.warn('[ghostty] write', bytes.length, 'bytes, handle:', this.handle);
     const ptr = this.exports.ghostty_wasm_alloc_u8_array(bytes.length);
     new Uint8Array(this.memory.buffer).set(bytes, ptr);
     this.exports.ghostty_terminal_write(this.handle, ptr, bytes.length);
     this.exports.ghostty_wasm_free_u8_array(ptr, bytes.length);
+    console.warn('[ghostty] write done');
   }
 
   resize(cols: number, rows: number): void {
@@ -387,6 +389,7 @@ export class GhosttyTerminal {
 
   free(): void {
     if (!this.handle) return;
+    console.warn('[ghostty] free handle:', this.handle);
     if (this.viewportBufferPtr) {
       this.exports.ghostty_wasm_free_u8_array(this.viewportBufferPtr, this.viewportBufferSize);
       this.viewportBufferPtr = 0;
@@ -395,6 +398,7 @@ export class GhosttyTerminal {
     // Zero the handle so all subsequent WASM calls receive 0 and no-op
     // at the Zig level (every export uses `ptr orelse return`).
     this.handle = 0 as unknown as TerminalHandle;
+    console.warn('[ghostty] free done');
   }
 
   // ==========================================================================
@@ -416,7 +420,10 @@ export class GhosttyTerminal {
    */
   update(): DirtyState {
     if (!this.handle) return DirtyState.NONE;
-    return this.exports.ghostty_render_state_update(this.handle) as DirtyState;
+    console.warn('[ghostty] update handle:', this.handle);
+    const result = this.exports.ghostty_render_state_update(this.handle) as DirtyState;
+    console.warn('[ghostty] update done');
+    return result;
   }
 
   /**

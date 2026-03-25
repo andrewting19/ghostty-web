@@ -431,10 +431,9 @@ export class Terminal implements ITerminalCore {
       // Create mouse tracking configuration
       const canvas = this.canvas;
       const renderer = this.renderer;
-      const wasmTerm = this.wasmTerm;
       const mouseConfig: MouseTrackingConfig = {
-        hasMouseTracking: () => wasmTerm?.hasMouseTracking() ?? false,
-        hasSgrMouseMode: () => wasmTerm?.getMode(1006, false) ?? true, // SGR extended mode
+        hasMouseTracking: () => this.wasmTerm?.hasMouseTracking() ?? false,
+        hasSgrMouseMode: () => this.wasmTerm?.getMode(1006, false) ?? true, // SGR extended mode
         getCellDimensions: () => ({
           width: renderer.charWidth,
           height: renderer.charHeight,
@@ -520,7 +519,9 @@ export class Terminal implements ITerminalCore {
       parent.addEventListener('wheel', this.handleWheel, { passive: false, capture: true });
 
       // Render initial blank screen (force full redraw)
+      console.warn('[ghostty] open: initial render');
       this.renderer.render(this.wasmTerm, true, this.viewportY, this, this.scrollbarOpacity);
+      console.warn('[ghostty] open: initial render done');
 
       // Start render loop
       this.startRenderLoop();
@@ -752,11 +753,15 @@ export class Terminal implements ITerminalCore {
 
     try {
       // Free old WASM terminal and create new one
+      console.warn('[ghostty] reset: freeing old terminal');
       if (this.wasmTerm) {
         this.wasmTerm.free();
       }
+      console.warn('[ghostty] reset: creating new terminal');
       const config = this.buildWasmConfig();
       this.wasmTerm = this.ghostty!.createTerminal(this.cols, this.rows, config);
+      this.selectionManager?.setWasmTerm(this.wasmTerm);
+      console.warn('[ghostty] reset: done');
 
       // Clear renderer
       this.renderer!.clear();
@@ -1170,6 +1175,24 @@ export class Terminal implements ITerminalCore {
   /**
    * Cancel the render loop
    */
+  /**
+   * Pause the render loop. Call resumeRendering() to restart.
+   * Useful for terminals that are off-screen — avoids wasting CPU
+   * on renderStateUpdate calls for invisible terminals.
+   */
+  pauseRendering(): void {
+    this.cancelRenderLoop();
+  }
+
+  /**
+   * Resume the render loop after pauseRendering().
+   */
+  resumeRendering(): void {
+    if (this.isOpen && !this.isDisposed) {
+      this.startRenderLoop();
+    }
+  }
+
   private cancelRenderLoop(): void {
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId);
