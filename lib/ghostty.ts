@@ -289,9 +289,6 @@ export class GhosttyTerminal {
   /** Size of GhosttyCell in WASM (16 bytes) */
   private static readonly CELL_SIZE = 16;
 
-  /** Set after free() to prevent use-after-free on the WASM handle */
-  private freed = false;
-
   /** Reusable buffer for viewport operations */
   private viewportBufferPtr: number = 0;
   private viewportBufferSize: number = 0;
@@ -371,9 +368,8 @@ export class GhosttyTerminal {
   // ==========================================================================
 
   write(data: string | Uint8Array): void {
-    if (this.freed) return;
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-    if (bytes.length === 0) return;
+    if (!this.handle || bytes.length === 0) return;
     const ptr = this.exports.ghostty_wasm_alloc_u8_array(bytes.length);
     new Uint8Array(this.memory.buffer).set(bytes, ptr);
     this.exports.ghostty_terminal_write(this.handle, ptr, bytes.length);
@@ -381,7 +377,7 @@ export class GhosttyTerminal {
   }
 
   resize(cols: number, rows: number): void {
-    if (this.freed || (cols === this._cols && rows === this._rows)) return;
+    if (!this.handle || (cols === this._cols && rows === this._rows)) return;
     this._cols = cols;
     this._rows = rows;
     this.exports.ghostty_terminal_resize(this.handle, cols, rows);
@@ -390,13 +386,15 @@ export class GhosttyTerminal {
   }
 
   free(): void {
-    if (this.freed) return;
-    this.freed = true;
+    if (!this.handle) return;
     if (this.viewportBufferPtr) {
       this.exports.ghostty_wasm_free_u8_array(this.viewportBufferPtr, this.viewportBufferSize);
       this.viewportBufferPtr = 0;
     }
     this.exports.ghostty_terminal_free(this.handle);
+    // Zero the handle so all subsequent WASM calls receive 0 and no-op
+    // at the Zig level (every export uses `ptr orelse return`).
+    this.handle = 0 as unknown as TerminalHandle;
   }
 
   // ==========================================================================
@@ -417,7 +415,7 @@ export class GhosttyTerminal {
    * Safe to call multiple times - dirty state persists until markClean().
    */
   update(): DirtyState {
-    if (this.freed) return DirtyState.NONE;
+    if (!this.handle) return DirtyState.NONE;
     return this.exports.ghostty_render_state_update(this.handle) as DirtyState;
   }
 
@@ -426,7 +424,7 @@ export class GhosttyTerminal {
    * Ensures render state is fresh by calling update().
    */
   getCursor(): RenderStateCursor {
-    if (this.freed) {
+    if (!this.handle) {
       return {
         x: 0,
         y: 0,
@@ -491,6 +489,7 @@ export class GhosttyTerminal {
    * Returns a reusable cell array (zero allocation after warmup).
    */
   getViewport(): GhosttyCell[] {
+    if (!this.handle) return this.cellPool;
     const totalCells = this._cols * this._rows;
     const neededSize = totalCells * GhosttyTerminal.CELL_SIZE;
 
@@ -527,7 +526,7 @@ export class GhosttyTerminal {
    * Returns a COPY of the cells to avoid pool reference issues.
    */
   getLine(y: number): GhosttyCell[] | null {
-    if (this.freed || y < 0 || y >= this._rows) return null;
+    if (!this.handle || y < 0 || y >= this._rows) return null;
     // Call update() to ensure render state is fresh.
     // This is safe to call multiple times - dirty state persists until markClean().
     this.update();
@@ -588,7 +587,6 @@ export class GhosttyTerminal {
 
   /** Get number of scrollback lines (history, not including active screen) */
   getScrollbackLength(): number {
-    if (this.freed) return 0;
     return this.exports.ghostty_terminal_get_scrollback_length(this.handle);
   }
 
@@ -598,7 +596,7 @@ export class GhosttyTerminal {
    * @param offset 0 = oldest line, (length-1) = most recent scrollback line
    */
   getScrollbackLine(offset: number): GhosttyCell[] | null {
-    if (this.freed) return null;
+    if (!this.handle) return null;
     const neededSize = this._cols * GhosttyTerminal.CELL_SIZE;
 
     // Ensure buffer is allocated
