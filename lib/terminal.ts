@@ -725,10 +725,30 @@ export class Terminal implements ITerminalCore {
   reset(): void {
     this.assertOpen();
 
-    // Cancel the render loop while we swap out the WASM terminal handle.
-    // Without this, a rAF callback can fire between free() and createTerminal()
-    // and access a dangling handle, causing a WASM trap / infinite loop.
+    // Cancel ALL animation frame chains before swapping the WASM handle.
+    // There are three independent rAF chains that access wasmTerm:
+    // 1. The main render loop (animationFrameId)
+    // 2. Smooth scroll animation (scrollAnimationFrame)
+    // 3. Scrollbar fade in/out (inline rAF in fadeInScrollbar/fadeOutScrollbar)
+    // Missing any of these causes use-after-free when the callback fires
+    // between free() and createTerminal().
     this.cancelRenderLoop();
+    if (this.scrollAnimationFrame) {
+      cancelAnimationFrame(this.scrollAnimationFrame);
+      this.scrollAnimationFrame = undefined;
+    }
+    // Reset scroll state so stale scroll animations don't restart
+    this.viewportY = 0;
+    this.targetViewportY = 0;
+    this.scrollAnimationStartTime = undefined;
+    this.scrollAnimationStartY = undefined;
+    // Clear scrollbar timers
+    if (this.scrollbarHideTimeout) {
+      clearTimeout(this.scrollbarHideTimeout);
+      this.scrollbarHideTimeout = undefined;
+    }
+    this.scrollbarVisible = false;
+    this.scrollbarOpacity = 0;
 
     try {
       // Free old WASM terminal and create new one
