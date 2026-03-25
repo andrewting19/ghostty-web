@@ -557,6 +557,11 @@ export class Terminal implements ITerminalCore {
     // preserve selection when new data arrives. Selection is cleared by user actions
     // like clicking or typing, not by incoming data.
 
+    // Capture scroll position before the write so we can decide whether to
+    // auto-scroll afterwards.  viewportY === 0 means the viewport is at the
+    // bottom (following output).
+    const wasAtBottom = this.viewportY === 0;
+
     // Write directly to WASM terminal (handles VT parsing internally)
     this.wasmTerm!.write(data);
 
@@ -575,8 +580,10 @@ export class Terminal implements ITerminalCore {
     // Invalidate link cache (content changed)
     this.linkDetector?.invalidateCache();
 
-    // Phase 2: Auto-scroll to bottom on new output (xterm.js behavior)
-    if (this.viewportY !== 0) {
+    // Auto-scroll only if user was already following output (at bottom).
+    // viewportY === 0 means "at bottom" — don't yank users back if they
+    // scrolled up to read history while output is streaming.
+    if (wasAtBottom && this.viewportY !== 0) {
       this.scrollToBottom();
     }
 

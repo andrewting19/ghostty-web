@@ -10,6 +10,7 @@
  * - Dirty line optimization for 60 FPS
  */
 
+import { safeFromCodePoint } from './ghostty';
 import type { ITheme } from './interfaces';
 import type { SelectionManager } from './selection-manager';
 import type { GhosttyCell, ILink } from './types';
@@ -645,7 +646,7 @@ export class CanvasRenderer {
       char = this.currentBuffer.getGraphemeString(y, x);
     } else {
       // Simple cell - single codepoint
-      char = String.fromCodePoint(cell.codepoint || 32); // Default to space if null
+      char = safeFromCodePoint(cell.codepoint || 32);
     }
     this.ctx.fillText(char, textX, textY);
 

@@ -8,6 +8,7 @@
  * take precedence over regex-detected URLs.
  */
 
+import { safeFromCodePoint } from '../ghostty';
 import type { IBufferRange, ILink, ILinkProvider } from '../types';
 
 /**
@@ -114,7 +115,7 @@ export class UrlRegexProvider implements ILinkProvider {
       if (codepoint === 0 || codepoint < 32) {
         chars.push(' ');
       } else {
-        chars.push(String.fromCodePoint(codepoint));
+        chars.push(safeFromCodePoint(codepoint));
       }
     }
 

@@ -37,6 +37,34 @@ export {
 };
 
 /**
+ * Safely convert a codepoint to a string character, returning the Unicode
+ * replacement character for values outside the valid range (0x0000–0x10FFFF,
+ * excluding surrogates 0xD800–0xDFFF).  Falls back to a space for zero/negative.
+ *
+ * WASM memory can contain uninitialised or corrupt cell data; calling
+ * String.fromCodePoint() with an out-of-range value throws a RangeError that
+ * poisons the entire runtime.  This helper is the single validation point so
+ * every consumer stays safe.
+ */
+export function safeFromCodePoint(cp: number): string {
+  if (cp <= 0) return ' ';
+  if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return '\uFFFD';
+  return String.fromCodePoint(cp);
+}
+
+/**
+ * Safely convert an array of codepoints (e.g. a grapheme cluster) to a string.
+ * Invalid individual codepoints are replaced with U+FFFD.
+ */
+export function safeFromCodePoints(cps: number[]): string {
+  if (!cps || cps.length === 0) return ' ';
+  const sanitised = cps.map((cp) =>
+    cp > 0x10ffff || cp < 0 || (cp >= 0xd800 && cp <= 0xdfff) ? 0xfffd : cp === 0 ? 32 : cp
+  );
+  return String.fromCodePoint(...sanitised);
+}
+
+/**
  * Main Ghostty WASM wrapper class
  */
 export class Ghostty {
@@ -827,8 +855,7 @@ export class GhosttyTerminal {
    */
   getGraphemeString(row: number, col: number): string {
     const codepoints = this.getGrapheme(row, col);
-    if (!codepoints || codepoints.length === 0) return ' ';
-    return String.fromCodePoint(...codepoints);
+    return safeFromCodePoints(codepoints!);
   }
 
   /**
@@ -864,8 +891,7 @@ export class GhosttyTerminal {
    */
   getScrollbackGraphemeString(offset: number, col: number): string {
     const codepoints = this.getScrollbackGrapheme(offset, col);
-    if (!codepoints || codepoints.length === 0) return ' ';
-    return String.fromCodePoint(...codepoints);
+    return safeFromCodePoints(codepoints!);
   }
 
   private invalidateBuffers(): void {

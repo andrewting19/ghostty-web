@@ -17,7 +17,7 @@
 
 import { EventEmitter } from './event-emitter';
 import type { GhosttyTerminal } from './ghostty';
-import { CellFlags } from './ghostty';
+import { CellFlags, safeFromCodePoint } from './ghostty';
 import type {
   IBuffer,
   IBufferCell,
@@ -303,20 +303,8 @@ export class BufferCell implements IBufferCell {
 
   getChars(): string {
     const codepoint = this.cell.codepoint;
-
-    // Return empty string for null character or invalid codepoints
-    if (codepoint === 0) {
-      return '';
-    }
-
-    // Validate codepoint is within valid Unicode range
-    // Valid: 0x0000 to 0x10FFFF, excluding surrogates (0xD800-0xDFFF)
-    if (codepoint < 0 || codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)) {
-      // Return replacement character for invalid codepoints
-      return '\uFFFD';
-    }
-
-    return String.fromCodePoint(codepoint);
+    if (codepoint === 0) return '';
+    return safeFromCodePoint(codepoint);
   }
 
   getCode(): number {

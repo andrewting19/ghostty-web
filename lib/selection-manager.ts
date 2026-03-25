@@ -11,7 +11,7 @@
  */
 
 import { EventEmitter } from './event-emitter';
-import type { GhosttyTerminal } from './ghostty';
+import { type GhosttyTerminal, safeFromCodePoint } from './ghostty';
 import type { IEvent } from './interfaces';
 import type { CanvasRenderer } from './renderer';
 import type { Terminal } from './terminal';
@@ -177,7 +177,7 @@ export class SelectionManager {
               char = this.wasmTerm.getGraphemeString(screenRow, col);
             }
           } else {
-            char = String.fromCodePoint(cell.codepoint);
+            char = safeFromCodePoint(cell.codepoint);
           }
           lineText += char;
           if (char.trim()) {
@@ -923,7 +923,7 @@ export class SelectionManager {
     // Includes: / (path sep), . (extensions), ~ (home), @ (emails), + (encodings)
     const isWordChar = (cell: GhosttyCell) => {
       if (!cell || cell.codepoint === 0) return false;
-      const char = String.fromCodePoint(cell.codepoint);
+      const char = safeFromCodePoint(cell.codepoint);
       return /[\w\-./~@+]/.test(char);
     };
 
