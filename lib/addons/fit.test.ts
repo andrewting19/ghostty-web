@@ -179,7 +179,6 @@ describe('Dimension Calculation', () => {
 
   test('fit() calculates correct dimensions from container', () => {
     // Create a mock element with known dimensions
-    // FitAddon subtracts 15px for scrollbar, so we need to account for that
     const mockElement = document.createElement('div');
     Object.defineProperty(mockElement, 'clientWidth', { value: 900, configurable: true });
     Object.defineProperty(mockElement, 'clientHeight', { value: 480, configurable: true });
@@ -206,13 +205,12 @@ describe('Dimension Calculation', () => {
     addon.activate(mockTerminal as any);
     addon.fit();
 
-    // Expected: (900 - 15 scrollbar) / 9 = 98 cols, 480 / 16 = 30 rows
-    expect(resizedCols).toBe(98);
+    // Expected: 900 / 9 = 100 cols, 480 / 16 = 30 rows
+    expect(resizedCols).toBe(100);
     expect(resizedRows).toBe(30);
   });
 
   test('proposeDimensions returns correct values', () => {
-    // FitAddon subtracts 15px for scrollbar width
     const mockElement = document.createElement('div');
     Object.defineProperty(mockElement, 'clientWidth', { value: 720, configurable: true });
     Object.defineProperty(mockElement, 'clientHeight', { value: 384, configurable: true });
@@ -230,7 +228,7 @@ describe('Dimension Calculation', () => {
     addon.activate(mockTerminal as any);
     const dims = addon.proposeDimensions();
 
-    // Expected: (720 - 15 scrollbar) / 8 = 88 cols, 384 / 16 = 24 rows
-    expect(dims).toEqual({ cols: 88, rows: 24 });
+    // Expected: 720 / 8 = 90 cols, 384 / 16 = 24 rows
+    expect(dims).toEqual({ cols: 90, rows: 24 });
   });
 });

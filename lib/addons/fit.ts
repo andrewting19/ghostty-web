@@ -21,7 +21,6 @@ import type { ITerminalAddon, ITerminalCore } from '../interfaces';
 
 const MINIMUM_COLS = 2;
 const MINIMUM_ROWS = 1;
-const DEFAULT_SCROLLBAR_WIDTH = 15; // Reserve space for future scrollback scrollbar
 const RESIZE_DEBOUNCE_MS = 100; // Debounce time for ResizeObserver
 
 // ============================================================================
@@ -133,7 +132,7 @@ export class FitAddon implements ITerminalAddon {
    * - Terminal container element dimensions (clientWidth/Height)
    * - Terminal element padding
    * - Font metrics (character cell size)
-   * - Scrollbar width reservation
+   * - Overlay scrollbar rendering does not consume layout width
    *
    * @returns Proposed dimensions or undefined if cannot calculate
    */
@@ -185,7 +184,7 @@ export class FitAddon implements ITerminalAddon {
     }
 
     // Calculate available space (subtract padding since clientWidth includes padding)
-    const availableWidth = containerWidth - paddingLeft - paddingRight - DEFAULT_SCROLLBAR_WIDTH;
+    const availableWidth = containerWidth - paddingLeft - paddingRight;
     const availableHeight = containerHeight - paddingTop - paddingBottom;
 
     // Calculate dimensions (enforce minimums)
