@@ -929,7 +929,7 @@ describe('onKey event', () => {
   });
 });
 
-describe('onTitleChange event', () => {
+  describe('onTitleChange event', () => {
   let container: HTMLElement | null = null;
 
   beforeEach(async () => {
@@ -1081,6 +1081,38 @@ describe('attachCustomKeyEventHandler()', () => {
 
       const handler = (e: KeyboardEvent) => false;
       expect(() => term.attachCustomKeyEventHandler(handler)).not.toThrow();
+      term.dispose();
+    });
+
+    test('should answer OSC 10/11/12 color queries in JS without writing them to WASM', async () => {
+      const term = await createIsolatedTerminal({
+        theme: {
+          foreground: '#abcdef',
+          background: '#123456',
+          cursor: '#fedcba',
+        },
+      });
+      term.open(container!);
+
+      const responses: string[] = [];
+      term.onData((data) => {
+        responses.push(data);
+      });
+
+      term.write('\x1b]10;?\x07\x1b]11;?\x1b\\\x1b]12;?\x07hello');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(responses).toEqual([
+        '\x1b]10;rgb:ab/cd/ef\x07',
+        '\x1b]11;rgb:12/34/56\x1b\\',
+        '\x1b]12;rgb:fe/dc/ba\x07',
+      ]);
+      const bufferText = term.buffer.active.getLine(0)?.translateToString(true) ?? '';
+      expect(bufferText).toContain('hello');
+      expect(bufferText).not.toContain('10;?');
+      expect(bufferText).not.toContain('11;?');
+      expect(bufferText).not.toContain('12;?');
+
       term.dispose();
     });
   });
