@@ -1011,6 +1011,36 @@ describe('onTitleChange event', () => {
       expect(receivedTitle).toBe('Title with ST');
       term.dispose();
     });
+
+    test('should write OSC 52 clipboard content to navigator.clipboard', async () => {
+      const originalClipboard = navigator.clipboard;
+      const writes: string[] = [];
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          writeText: async (text: string) => {
+            writes.push(text);
+          },
+        },
+      });
+
+      try {
+        const term = await createIsolatedTerminal({ cols: 80, rows: 24 });
+        if (!container) return;
+        term.open(container);
+
+        term.write('\x1b]52;c;Y2xpcGJvYXJkIHRleHQ=\x07');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(writes).toEqual(['clipboard text']);
+        term.dispose();
+      } finally {
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: originalClipboard,
+        });
+      }
+    });
   });
 });
 
@@ -2536,6 +2566,25 @@ describe('Options Proxy handleOptionChange', () => {
     // Verify renderer was updated
     // @ts-ignore - accessing private for test
     expect(renderer.fontFamily).toBe('Courier New, monospace');
+
+    term.dispose();
+  });
+
+  test('changing lineHeight updates renderer metrics', async () => {
+    if (!container) return;
+
+    const term = await createIsolatedTerminal({ fontSize: 15, lineHeight: 1, cols: 80, rows: 24 });
+    term.open(container);
+
+    // @ts-ignore - accessing private for test
+    const renderer = term.renderer;
+    const before = renderer.getMetrics();
+
+    term.options.lineHeight = 1.3;
+
+    expect(term.options.lineHeight).toBe(1.3);
+    const after = renderer.getMetrics();
+    expect(after.height).toBeGreaterThan(before.height);
 
     term.dispose();
   });

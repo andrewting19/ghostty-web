@@ -13,7 +13,8 @@ export interface ITerminalOptions {
   scrollback?: number; // Default: 1000
   fontSize?: number; // Default: 15
   fontFamily?: string; // Default: 'monospace'
-  lineHeight?: number; // Line height multiplier (default: 1.0, reserved — line height is derived from font metrics)
+  lineHeight?: number; // Line height multiplier (default: 1.0)
+  macOptionIsMeta?: boolean; // Treat Option/Alt as Meta (ESC prefix) on macOS
   allowTransparency?: boolean;
 
   // Phase 1 additions

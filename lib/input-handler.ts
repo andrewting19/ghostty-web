@@ -172,6 +172,57 @@ export interface MouseTrackingConfig {
   getCanvasOffset: () => { left: number; top: number };
 }
 
+const BASE_PRINTABLE_BY_CODE: Record<string, string> = {
+  KeyA: 'a',
+  KeyB: 'b',
+  KeyC: 'c',
+  KeyD: 'd',
+  KeyE: 'e',
+  KeyF: 'f',
+  KeyG: 'g',
+  KeyH: 'h',
+  KeyI: 'i',
+  KeyJ: 'j',
+  KeyK: 'k',
+  KeyL: 'l',
+  KeyM: 'm',
+  KeyN: 'n',
+  KeyO: 'o',
+  KeyP: 'p',
+  KeyQ: 'q',
+  KeyR: 'r',
+  KeyS: 's',
+  KeyT: 't',
+  KeyU: 'u',
+  KeyV: 'v',
+  KeyW: 'w',
+  KeyX: 'x',
+  KeyY: 'y',
+  KeyZ: 'z',
+  Digit0: '0',
+  Digit1: '1',
+  Digit2: '2',
+  Digit3: '3',
+  Digit4: '4',
+  Digit5: '5',
+  Digit6: '6',
+  Digit7: '7',
+  Digit8: '8',
+  Digit9: '9',
+  Minus: '-',
+  Equal: '=',
+  BracketLeft: '[',
+  BracketRight: ']',
+  Backslash: '\\',
+  Semicolon: ';',
+  Quote: "'",
+  Backquote: '`',
+  Comma: ',',
+  Period: '.',
+  Slash: '/',
+  Space: ' ',
+};
+
 export class InputHandler {
   private encoder: KeyEncoder;
   private container: HTMLElement;
@@ -197,6 +248,7 @@ export class InputHandler {
   private isComposing = false;
   private isDisposed = false;
   private mouseButtonsPressed = 0; // Track which buttons are pressed for motion reporting
+  private macOptionIsMeta = false;
   private lastKeyDownData: string | null = null;
   private lastKeyDownTime = 0;
   private lastPasteData: string | null = null;
@@ -231,7 +283,8 @@ export class InputHandler {
     getMode?: (mode: number) => boolean,
     onCopy?: () => boolean,
     inputElement?: HTMLElement,
-    mouseConfig?: MouseTrackingConfig
+    mouseConfig?: MouseTrackingConfig,
+    macOptionIsMeta: boolean = false
   ) {
     this.encoder = ghostty.createKeyEncoder();
     this.container = container;
@@ -243,6 +296,7 @@ export class InputHandler {
     this.getModeCallback = getMode;
     this.onCopyCallback = onCopy;
     this.mouseConfig = mouseConfig;
+    this.macOptionIsMeta = macOptionIsMeta;
 
     // Attach event listeners
     this.attach();
@@ -253,6 +307,31 @@ export class InputHandler {
    */
   setCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void {
     this.customKeyEventHandler = handler;
+  }
+
+  setMacOptionIsMeta(value: boolean): void {
+    this.macOptionIsMeta = value;
+  }
+
+  private shouldTreatAltAsMeta(event: KeyboardEvent): boolean {
+    if (!this.macOptionIsMeta) return false;
+    if (!event.altKey || event.ctrlKey || event.metaKey) return false;
+    return true;
+  }
+
+  private getPrintableUtf8(event: KeyboardEvent): string | undefined {
+    if (event.key.length !== 1 || event.key.charCodeAt(0) >= 128) return undefined;
+    return event.key.toLowerCase();
+  }
+
+  private getMacMetaPrintable(event: KeyboardEvent): string | null {
+    if (!this.shouldTreatAltAsMeta(event)) return null;
+    const base = BASE_PRINTABLE_BY_CODE[event.code];
+    if (!base) return null;
+    if (event.shiftKey && base >= 'a' && base <= 'z') {
+      return `\x1b${base.toUpperCase()}`;
+    }
+    return `\x1b${base}`;
   }
 
   /**
@@ -402,6 +481,15 @@ export class InputHandler {
       return;
     }
 
+    const macMetaPrintable = this.getMacMetaPrintable(event);
+    if (macMetaPrintable !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.onDataCallback(macMetaPrintable);
+      this.recordKeyDownData(macMetaPrintable);
+      return;
+    }
+
     // For printable characters without modifiers, send the character directly
     // This handles: a-z, A-Z (with shift), 0-9, punctuation, etc.
     if (this.isPrintableCharacter(event)) {
@@ -524,10 +612,11 @@ export class InputHandler {
       // For letter/number keys, even with modifiers, pass the base character
       // This helps the encoder produce correct control sequences (e.g., Ctrl+A = 0x01)
       // For special keys (Enter, Arrow keys, etc.), don't pass utf8
-      const utf8 =
-        event.key.length === 1 && event.key.charCodeAt(0) < 128
-          ? event.key.toLowerCase() // Use lowercase for consistency
-          : undefined;
+      this.encoder.setOption(KeyEncoderOption.ALT_ESC_PREFIX, this.shouldTreatAltAsMeta(event));
+      let utf8 = this.getPrintableUtf8(event);
+      if (this.shouldTreatAltAsMeta(event)) {
+        utf8 = BASE_PRINTABLE_BY_CODE[event.code] ?? utf8;
+      }
 
       const encoded = this.encoder.encode({
         action,

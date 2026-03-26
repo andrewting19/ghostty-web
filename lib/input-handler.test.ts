@@ -981,6 +981,35 @@ describe('InputHandler', () => {
       // Alt+A often produces ESC a or similar
       expect(dataReceived[0].length).toBeGreaterThan(0);
     });
+
+    test('macOptionIsMeta converts Option key to ESC-prefixed base character', () => {
+      const originalPlatform = navigator.platform;
+      Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
+
+      try {
+        const handler = new InputHandler(
+          ghostty,
+          container as any,
+          (data) => dataReceived.push(data),
+          () => {
+            bellCalled = true;
+          },
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          true
+        );
+
+        simulateKey(container, createKeyEvent('KeyE', '´', { alt: true }));
+
+        expect(dataReceived).toEqual(['\x1be']);
+      } finally {
+        Object.defineProperty(navigator, 'platform', { configurable: true, value: originalPlatform });
+      }
+    });
   });
 
   describe('Clipboard Operations', () => {

@@ -36,13 +36,15 @@ import { OSC8LinkProvider } from './providers/osc8-link-provider';
 import { UrlRegexProvider } from './providers/url-regex-provider';
 import { CanvasRenderer } from './renderer';
 import { SelectionManager } from './selection-manager';
-import type { ILink, ILinkProvider } from './types';
+import type { Cursor, ILink, ILinkProvider } from './types';
 
 // ============================================================================
 // Terminal Class
 // ============================================================================
 
 export class Terminal implements ITerminalCore {
+  private static nextInstanceId = 1;
+
   // Public properties (xterm.js compatibility)
   public cols: number;
   public rows: number;
@@ -102,6 +104,7 @@ export class Terminal implements ITerminalCore {
   private isDisposed = false;
   private animationFrameId?: number;
   private writeQueue: Uint8Array[] = [];
+  private readonly instanceId: number;
 
   // Addons
   private addons: ITerminalAddon[] = [];
@@ -134,6 +137,7 @@ export class Terminal implements ITerminalCore {
   private readonly SCROLLBAR_FADE_DURATION_MS = 200; // 200ms fade animation
 
   constructor(options: ITerminalOptions = {}) {
+    this.instanceId = Terminal.nextInstanceId++;
     // Use provided Ghostty instance (for test isolation) or get module-level instance
     this.ghostty = options.ghostty ?? getGhostty();
 
@@ -147,6 +151,8 @@ export class Terminal implements ITerminalCore {
       scrollback: options.scrollback ?? 10000,
       fontSize: options.fontSize ?? 15,
       fontFamily: options.fontFamily ?? 'monospace',
+      lineHeight: options.lineHeight ?? 1,
+      macOptionIsMeta: options.macOptionIsMeta ?? false,
       allowTransparency: options.allowTransparency ?? false,
       convertEol: options.convertEol ?? false,
       disableStdin: options.disableStdin ?? false,
@@ -173,6 +179,56 @@ export class Terminal implements ITerminalCore {
 
     // Initialize buffer API
     this.buffer = new BufferNamespace(this);
+  }
+
+  private recordDiagnostic(event: string, info: Record<string, unknown> = {}): void {
+    const sink = globalThis as typeof globalThis & {
+      __ghosttyWebDiag?: { events?: Array<Record<string, unknown>> };
+    };
+    const events = sink.__ghosttyWebDiag?.events;
+    if (!events) return;
+    events.push({
+      terminalId: this.instanceId,
+      event,
+      cols: this.cols,
+      rows: this.rows,
+      ts: typeof performance !== 'undefined' ? performance.now() : Date.now(),
+      ...info,
+    });
+    if (events.length > 200) events.splice(0, events.length - 200);
+  }
+
+  private timeOperation<T>(
+    event: string,
+    info: Record<string, unknown>,
+    fn: () => T,
+    warnThresholdMs: number = 32,
+  ): T {
+    const start = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.recordDiagnostic(`${event}:start`, info);
+    try {
+      return fn();
+    } finally {
+      const end = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const durationMs = end - start;
+      this.recordDiagnostic(`${event}:end`, { ...info, durationMs });
+      if (durationMs >= warnThresholdMs && this.isDebugLoggingEnabled()) {
+        console.warn(`[ghostty][t${this.instanceId}] ${event} took ${durationMs.toFixed(1)}ms`, info);
+      }
+    }
+  }
+
+  private isDebugLoggingEnabled(): boolean {
+    const sink = globalThis as typeof globalThis & {
+      __ghosttyDebug?: boolean;
+      localStorage?: Storage;
+    };
+    if (sink.__ghosttyDebug) return true;
+    try {
+      return sink.localStorage?.getItem('ghostty-debug') === '1';
+    } catch {
+      return false;
+    }
   }
 
   // ==========================================================================
@@ -218,6 +274,17 @@ export class Terminal implements ITerminalCore {
           this.renderer.setFontFamily(this.options.fontFamily);
           this.handleFontChange();
         }
+        break;
+
+      case 'lineHeight':
+        if (this.renderer) {
+          this.renderer.setLineHeight(this.options.lineHeight);
+          this.handleFontChange();
+        }
+        break;
+
+      case 'macOptionIsMeta':
+        this.inputHandler?.setMacOptionIsMeta(this.options.macOptionIsMeta);
         break;
 
       case 'cols':
@@ -420,6 +487,7 @@ export class Terminal implements ITerminalCore {
       this.renderer = new CanvasRenderer(this.canvas, {
         fontSize: this.options.fontSize,
         fontFamily: this.options.fontFamily,
+        lineHeight: this.options.lineHeight,
         cursorStyle: this.options.cursorStyle,
         cursorBlink: this.options.cursorBlink,
         theme: this.options.theme,
@@ -476,7 +544,8 @@ export class Terminal implements ITerminalCore {
           return this.copySelection();
         },
         this.textarea,
-        mouseConfig
+        mouseConfig,
+        this.options.macOptionIsMeta
       );
 
       // Create selection manager (pass textarea for context menu positioning)
@@ -519,9 +588,9 @@ export class Terminal implements ITerminalCore {
       parent.addEventListener('wheel', this.handleWheel, { passive: false, capture: true });
 
       // Render initial blank screen (force full redraw)
-      console.warn('[ghostty] open: initial render');
+      if (this.isDebugLoggingEnabled()) console.warn('[ghostty] open: initial render');
       this.renderer.render(this.wasmTerm, true, this.viewportY, this, this.scrollbarOpacity);
-      console.warn('[ghostty] open: initial render done');
+      if (this.isDebugLoggingEnabled()) console.warn('[ghostty] open: initial render done');
 
       // Start render loop
       this.startRenderLoop();
@@ -554,51 +623,55 @@ export class Terminal implements ITerminalCore {
    * Internal write implementation (extracted from write())
    */
   private writeInternal(data: string | Uint8Array, callback?: () => void): void {
-    // Note: We intentionally do NOT clear selection on write - most modern terminals
-    // preserve selection when new data arrives. Selection is cleared by user actions
-    // like clicking or typing, not by incoming data.
+    const bytes = typeof data === 'string' ? data.length : data.byteLength;
+    this.timeOperation('write', { bytes }, () => {
+      // Note: We intentionally do NOT clear selection on write - most modern terminals
+      // preserve selection when new data arrives. Selection is cleared by user actions
+      // like clicking or typing, not by incoming data.
 
-    // Capture scroll position before the write so we can decide whether to
-    // auto-scroll afterwards.  viewportY === 0 means the viewport is at the
-    // bottom (following output).
-    const wasAtBottom = this.viewportY === 0;
+      // Capture scroll position before the write so we can decide whether to
+      // auto-scroll afterwards.  viewportY === 0 means the viewport is at the
+      // bottom (following output).
+      const wasAtBottom = this.viewportY === 0;
 
-    // Write directly to WASM terminal (handles VT parsing internally)
-    this.wasmTerm!.write(data);
+      // Write directly to WASM terminal (handles VT parsing internally)
+      this.wasmTerm!.write(data);
 
-    // Process any responses generated by the terminal (e.g., DSR cursor position)
-    // These need to be sent back to the PTY via onData
-    this.processTerminalResponses();
+      // Process any responses generated by the terminal (e.g., DSR cursor position)
+      // These need to be sent back to the PTY via onData
+      this.processTerminalResponses();
 
-    // Check for bell character (BEL, \x07)
-    // WASM doesn't expose bell events, so we detect it in the data stream
-    if (typeof data === 'string' && data.includes('\x07')) {
-      this.bellEmitter.fire();
-    } else if (data instanceof Uint8Array && data.includes(0x07)) {
-      this.bellEmitter.fire();
-    }
+      // Check for bell character (BEL, \x07)
+      // WASM doesn't expose bell events, so we detect it in the data stream
+      if (typeof data === 'string' && data.includes('\x07')) {
+        this.bellEmitter.fire();
+      } else if (data instanceof Uint8Array && data.includes(0x07)) {
+        this.bellEmitter.fire();
+      }
 
-    // Invalidate link cache (content changed)
-    this.linkDetector?.invalidateCache();
+      // Invalidate link cache (content changed)
+      this.linkDetector?.invalidateCache();
 
-    // Auto-scroll only if user was already following output (at bottom).
-    // viewportY === 0 means "at bottom" — don't yank users back if they
-    // scrolled up to read history while output is streaming.
-    if (wasAtBottom && this.viewportY !== 0) {
-      this.scrollToBottom();
-    }
+      // Auto-scroll only if user was already following output (at bottom).
+      // viewportY === 0 means "at bottom" — don't yank users back if they
+      // scrolled up to read history while output is streaming.
+      if (wasAtBottom && this.viewportY !== 0) {
+        this.scrollToBottom();
+      }
 
-    // Check for title changes (OSC 0, 1, 2 sequences)
-    // This is a simplified implementation - Ghostty WASM may provide this
-    if (typeof data === 'string' && data.includes('\x1b]')) {
-      this.checkForTitleChange(data);
-    }
+      // Check for title changes (OSC 0, 1, 2 sequences)
+      // This is a simplified implementation - Ghostty WASM may provide this
+      if (typeof data === 'string' && data.includes('\x1b]')) {
+        this.checkForTitleChange(data);
+        this.checkForClipboardWrite(data);
+      }
 
-    // Call callback if provided
-    if (callback) {
-      // Queue callback after next render
-      requestAnimationFrame(callback);
-    }
+      // Call callback if provided
+      if (callback) {
+        // Queue callback after next render
+        requestAnimationFrame(callback);
+      }
+    }, 24);
 
     // Render will happen on next animation frame
   }
@@ -680,28 +753,30 @@ export class Terminal implements ITerminalCore {
     this.cancelRenderLoop();
 
     try {
-      // Update dimensions
-      this.cols = cols;
-      this.rows = rows;
+      this.timeOperation('resize', { nextCols: cols, nextRows: rows }, () => {
+        // Update dimensions
+        this.cols = cols;
+        this.rows = rows;
 
-      // Resize WASM terminal (may reallocate buffers, invalidating TypedArray views)
-      this.wasmTerm!.resize(cols, rows);
+        // Resize WASM terminal (may reallocate buffers, invalidating TypedArray views)
+        this.wasmTerm!.resize(cols, rows);
 
-      // Resize renderer
-      this.renderer!.resize(cols, rows);
+        // Resize renderer
+        this.renderer!.resize(cols, rows);
 
-      // Update canvas dimensions
-      const metrics = this.renderer!.getMetrics();
-      this.canvas!.width = metrics.width * cols;
-      this.canvas!.height = metrics.height * rows;
-      this.canvas!.style.width = `${metrics.width * cols}px`;
-      this.canvas!.style.height = `${metrics.height * rows}px`;
+        // Update canvas dimensions
+        const metrics = this.renderer!.getMetrics();
+        this.canvas!.width = metrics.width * cols;
+        this.canvas!.height = metrics.height * rows;
+        this.canvas!.style.width = `${metrics.width * cols}px`;
+        this.canvas!.style.height = `${metrics.height * rows}px`;
 
-      // Fire resize event
-      this.resizeEmitter.fire({ cols, rows });
+        // Fire resize event
+        this.resizeEmitter.fire({ cols, rows });
 
-      // Force full render
-      this.renderer!.render(this.wasmTerm!, true, this.viewportY, this);
+        // Force full render
+        this.renderer!.render(this.wasmTerm!, true, this.viewportY, this);
+      }, 24);
     } catch (e) {
       console.error('Terminal resize failed:', e);
     }
@@ -752,22 +827,21 @@ export class Terminal implements ITerminalCore {
     this.scrollbarOpacity = 0;
 
     try {
-      // Free old WASM terminal and create new one
-      console.warn('[ghostty] reset: freeing old terminal');
-      if (this.wasmTerm) {
-        this.wasmTerm.free();
-      }
-      console.warn('[ghostty] reset: creating new terminal');
-      const config = this.buildWasmConfig();
-      this.wasmTerm = this.ghostty!.createTerminal(this.cols, this.rows, config);
-      this.selectionManager?.setWasmTerm(this.wasmTerm);
-      console.warn('[ghostty] reset: done');
+      this.timeOperation('reset', {}, () => {
+        // Free old WASM terminal and create new one
+        if (this.wasmTerm) {
+          this.wasmTerm.free();
+        }
+        const config = this.buildWasmConfig();
+        this.wasmTerm = this.ghostty!.createTerminal(this.cols, this.rows, config);
+        this.selectionManager?.setWasmTerm(this.wasmTerm);
 
-      // Clear renderer
-      this.renderer!.clear();
+        // Clear renderer
+        this.renderer!.clear();
 
-      // Reset title
-      this.currentTitle = '';
+        // Reset title
+        this.currentTitle = '';
+      }, 24);
     } catch (err) {
       console.error('ghostty-web: reset() failed:', err);
     }
@@ -1223,16 +1297,19 @@ export class Terminal implements ITerminalCore {
             this.animationFrameId = requestAnimationFrame(loop);
             return;
           }
-          // Render using WASM's native dirty tracking
-          // The render() method:
-          // 1. Calls update() once to sync state and check dirty flags
-          // 2. Only redraws dirty rows when forceAll=false
-          // 3. Always calls clearDirty() at the end
-          this.renderer.render(this.wasmTerm, false, this.viewportY, this, this.scrollbarOpacity);
+          let cursor!: Cursor;
+          this.timeOperation('renderLoop', { viewportY: this.viewportY }, () => {
+            // Render using WASM's native dirty tracking
+            // The render() method:
+            // 1. Calls update() once to sync state and check dirty flags
+            // 2. Only redraws dirty rows when forceAll=false
+            // 3. Always calls clearDirty() at the end
+            this.renderer!.render(this.wasmTerm!, false, this.viewportY, this, this.scrollbarOpacity);
 
-          // Check for cursor movement (Phase 2: onCursorMove event)
-          // Note: getCursor() reads from already-updated render state (from render() above)
-          const cursor = this.wasmTerm.getCursor();
+            // Check for cursor movement (Phase 2: onCursorMove event)
+            // Note: getCursor() reads from already-updated render state (from render() above)
+            cursor = this.wasmTerm!.getCursor();
+          }, 32);
           if (cursor.y !== this.lastCursorY) {
             this.lastCursorY = cursor.y;
             this.cursorMoveEmitter.fire();
@@ -1939,6 +2016,57 @@ export class Terminal implements ITerminalCore {
           this.titleChangeEmitter.fire(pt);
         }
       }
+    }
+  }
+
+  /**
+   * Check for OSC 52 clipboard writes and mirror them to the browser clipboard.
+   */
+  private checkForClipboardWrite(data: string): void {
+    const osc52Regex = /\x1b\]52;([^;]*);([A-Za-z0-9+/=]*)(?:\x07|\x1b\\)/g;
+    let match: RegExpExecArray | null = null;
+
+    // biome-ignore lint/suspicious/noAssignInExpressions: Standard regex pattern
+    while ((match = osc52Regex.exec(data)) !== null) {
+      const selection = match[1] ?? '';
+      const payload = match[2] ?? '';
+      if (!this.isClipboardWriteTarget(selection)) continue;
+
+      const text = this.decodeOsc52Payload(payload);
+      if (text === null) continue;
+      void this.writeClipboardText(text);
+    }
+  }
+
+  private isClipboardWriteTarget(selection: string): boolean {
+    if (!selection) return true;
+    return selection.includes('c') || selection.includes('s') || selection.includes('p');
+  }
+
+  private decodeOsc52Payload(payload: string): string | null {
+    if (payload.length === 0) return '';
+    try {
+      if (typeof atob === 'function') {
+        const binary = atob(payload);
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        return new TextDecoder().decode(bytes);
+      }
+      if (typeof Buffer !== 'undefined') {
+        return Buffer.from(payload, 'base64').toString('utf8');
+      }
+    } catch (error) {
+      console.warn('ghostty-web: failed to decode OSC 52 payload', error);
+      return null;
+    }
+    return null;
+  }
+
+  private async writeClipboardText(text: string): Promise<void> {
+    if (!navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (error) {
+      console.warn('ghostty-web: failed to write clipboard via OSC 52', error);
     }
   }
 

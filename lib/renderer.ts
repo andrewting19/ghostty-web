@@ -45,6 +45,7 @@ export interface IScrollbackProvider {
 export interface RendererOptions {
   fontSize?: number; // Default: 15
   fontFamily?: string; // Default: 'monospace'
+  lineHeight?: number; // Default: 1.0
   cursorStyle?: 'block' | 'underline' | 'bar'; // Default: 'block'
   cursorBlink?: boolean; // Default: false
   theme?: ITheme;
@@ -97,6 +98,7 @@ export class CanvasRenderer {
   private ctx: CanvasRenderingContext2D;
   private fontSize: number;
   private fontFamily: string;
+  private lineHeight: number;
   private cursorStyle: 'block' | 'underline' | 'bar';
   private cursorBlink: boolean;
   private theme: Required<ITheme>;
@@ -150,6 +152,7 @@ export class CanvasRenderer {
     // Apply options
     this.fontSize = options.fontSize ?? 15;
     this.fontFamily = options.fontFamily ?? 'monospace';
+    this.lineHeight = options.lineHeight ?? 1;
     this.cursorStyle = options.cursorStyle ?? 'block';
     this.cursorBlink = options.cursorBlink ?? false;
     this.theme = { ...DEFAULT_THEME, ...options.theme };
@@ -206,8 +209,9 @@ export class CanvasRenderer {
 
     // Add 2px padding to height to account for glyphs that overflow (like 'f', 'd', 'g', 'p')
     // and anti-aliasing pixels
-    const height = Math.ceil(ascent + descent) + 2;
-    const baseline = Math.ceil(ascent) + 1; // Offset baseline by half the padding
+    const contentHeight = Math.ceil(ascent + descent) + 2;
+    const height = Math.max(contentHeight, Math.ceil(contentHeight * this.lineHeight));
+    const baseline = Math.ceil((height - contentHeight) / 2) + Math.ceil(ascent) + 1;
 
     return { width, height, baseline };
   }
@@ -824,6 +828,14 @@ export class CanvasRenderer {
    */
   public setFontFamily(family: string): void {
     this.fontFamily = family;
+    this.metrics = this.measureFont();
+  }
+
+  /**
+   * Update line height multiplier and remeasure metrics.
+   */
+  public setLineHeight(lineHeight: number): void {
+    this.lineHeight = lineHeight > 0 ? lineHeight : 1;
     this.metrics = this.measureFont();
   }
 
