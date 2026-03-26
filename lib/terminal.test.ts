@@ -333,6 +333,17 @@ describe('Terminal', () => {
       term.dispose();
     });
 
+    test('focus() prefers the hidden textarea input when available', async () => {
+      const term = await createIsolatedTerminal();
+      term.open(container!);
+
+      term.focus();
+
+      expect(document.activeElement).toBe(term.textarea);
+
+      term.dispose();
+    });
+
     test('focus() before open does not throw', async () => {
       const term = await createIsolatedTerminal();
       expect(() => term.focus()).not.toThrow();

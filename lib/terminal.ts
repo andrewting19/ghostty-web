@@ -435,6 +435,8 @@ export class Terminal implements ITerminalCore {
       parent.setAttribute('role', 'textbox');
       parent.setAttribute('aria-label', 'Terminal input');
       parent.setAttribute('aria-multiline', 'true');
+      parent.style.caretColor = 'transparent';
+      parent.style.outline = 'none';
 
       // Create WASM terminal with current dimensions and config
       const config = this.buildWasmConfig();
@@ -914,15 +916,28 @@ export class Terminal implements ITerminalCore {
    * Focus terminal input
    */
   focus(): void {
-    if (this.isOpen && this.element) {
-      // Focus immediately for immediate keyboard/wheel event handling
-      this.element.focus();
+    if (!this.isOpen) return;
 
-      // Also schedule a delayed focus as backup to ensure it sticks
-      // (some browsers may need this if DOM isn't fully settled)
-      setTimeout(() => {
-        this.element?.focus();
-      }, 0);
+    const target = this.textarea ?? this.element;
+    if (!target) return;
+
+    try {
+      target.focus({ preventScroll: true });
+    } catch {
+      target.focus();
+    }
+
+    // Also schedule a delayed focus as backup to ensure it sticks
+    // (some browsers may need this if DOM isn't fully settled)
+    setTimeout(() => {
+      try {
+        target.focus({ preventScroll: true });
+      } catch {
+        target.focus();
+      }
+    }, 0);
+    if (this.element && this.element !== target) {
+      this.element.style.caretColor = 'transparent';
     }
   }
 
@@ -930,9 +945,9 @@ export class Terminal implements ITerminalCore {
    * Blur terminal (remove focus)
    */
   blur(): void {
-    if (this.isOpen && this.element) {
-      this.element.blur();
-    }
+    if (!this.isOpen) return;
+    this.textarea?.blur();
+    this.element?.blur();
   }
 
   /**
