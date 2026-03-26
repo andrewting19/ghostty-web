@@ -983,6 +983,23 @@ export class InputHandler {
     if (this.isDisposed) return;
     if (!this.mouseConfig?.hasMouseTracking()) return;
 
+    this.sendWheelMouseEvent(event);
+
+    // Prevent default scrolling when mouse tracking is active
+    event.preventDefault();
+  }
+
+  /**
+   * Send a wheel event as a mouse tracking sequence.
+   * Public so Terminal can forward wheel events it intercepted in capture phase.
+   */
+  handleWheelEvent(event: WheelEvent): void {
+    if (this.isDisposed) return;
+
+    this.sendWheelMouseEvent(event);
+  }
+
+  private sendWheelMouseEvent(event: WheelEvent): void {
     const cell = this.pixelToCell(event);
     if (!cell) return;
 
@@ -990,9 +1007,6 @@ export class InputHandler {
     const button = event.deltaY < 0 ? 64 : 65;
 
     this.sendMouseEvent(button, cell.col, cell.row, false, event);
-
-    // Prevent default scrolling when mouse tracking is active
-    event.preventDefault();
   }
 
   /**

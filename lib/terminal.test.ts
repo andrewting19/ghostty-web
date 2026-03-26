@@ -3061,4 +3061,53 @@ describe('Synchronous open()', () => {
 
     term.dispose();
   });
+
+  test('new terminal should not contain stale data from freed terminal', async () => {
+    if (!container) return;
+
+    const term1 = await createIsolatedTerminal({ cols: 80, rows: 24 });
+    term1.open(container);
+    term1.write('Hello stale data');
+
+    const ghostty = (term1 as any).ghostty;
+    const wasmTerm1 = term1.wasmTerm!;
+
+    wasmTerm1.free();
+    const wasmTerm2 = ghostty.createTerminal(80, 24);
+
+    const line = wasmTerm2.getLine(0);
+    expect(line).not.toBeNull();
+    for (const cell of line!) {
+      expect(cell.codepoint).toBe(0);
+    }
+    expect(wasmTerm2.getScrollbackLength()).toBe(0);
+
+    wasmTerm2.free();
+    term1.dispose();
+  });
+
+  test('freeing terminal after grapheme clusters should not corrupt WASM memory', async () => {
+    if (!container) return;
+
+    const term1 = await createIsolatedTerminal({ cols: 80, rows: 24 });
+    term1.open(container);
+    const ghostty = (term1 as any).ghostty;
+    const wasmTerm1 = term1.wasmTerm!;
+
+    wasmTerm1.write('\u{1F1FA}\u{1F1F8}');
+    wasmTerm1.write('\u{1F44B}\u{1F3FD}');
+    wasmTerm1.write('\u{1F468}\u200D\u{1F469}\u200D\u{1F467}');
+
+    wasmTerm1.free();
+
+    const wasmTerm2 = ghostty.createTerminal(80, 24);
+    expect(() => wasmTerm2.write('Hello')).not.toThrow();
+
+    const line = wasmTerm2.getLine(0);
+    expect(line).not.toBeNull();
+    expect(line![0].codepoint).toBe('H'.codePointAt(0)!);
+
+    wasmTerm2.free();
+    term1.dispose();
+  });
 });

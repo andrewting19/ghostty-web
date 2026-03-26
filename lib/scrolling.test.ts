@@ -166,6 +166,27 @@ describe('Terminal Scrolling', () => {
       // Should cap at 5 arrows
       expect(dataSent.length).toBeLessThanOrEqual(5);
     });
+
+    test('should forward wheel events as mouse sequences when tracking is active', async () => {
+      terminal.write('\x1B[?1000h\x1B[?1006h');
+      const inputHandler = (terminal as any).inputHandler;
+      expect(inputHandler).toBeDefined();
+      let forwarded = false;
+      inputHandler.handleWheelEvent = () => {
+        forwarded = true;
+      };
+
+      const wheelEvent = new WheelEvent('wheel', {
+        deltaY: -100,
+        clientX: 0,
+        clientY: 0,
+        bubbles: true,
+        cancelable: true,
+      });
+      container.dispatchEvent(wheelEvent);
+
+      expect(forwarded).toBe(true);
+    });
   });
 
   describe('Mode Transitions', () => {

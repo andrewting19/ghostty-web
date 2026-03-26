@@ -29,6 +29,17 @@ interface MockClipboardEvent {
   preventDefault: () => void;
   stopPropagation: () => void;
 }
+interface MockWheelEvent {
+  deltaY: number;
+  clientX: number;
+  clientY: number;
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  preventDefault: () => void;
+  stopPropagation: () => void;
+}
 interface MockInputEvent {
   type: string;
   inputType: string;
@@ -95,6 +106,22 @@ function createBeforeInputEvent(inputType: string, data: string | null): MockInp
     inputType,
     data,
     isComposing: false,
+    preventDefault: mock(() => {}),
+    stopPropagation: mock(() => {}),
+  };
+}
+function createWheelEvent(
+  deltaY: number,
+  coords: { clientX?: number; clientY?: number } = {}
+): MockWheelEvent {
+  return {
+    deltaY,
+    clientX: coords.clientX ?? 0,
+    clientY: coords.clientY ?? 0,
+    shiftKey: false,
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
     preventDefault: mock(() => {}),
     stopPropagation: mock(() => {}),
   };
@@ -1009,6 +1036,34 @@ describe('InputHandler', () => {
       } finally {
         Object.defineProperty(navigator, 'platform', { configurable: true, value: originalPlatform });
       }
+    });
+  });
+
+  describe('Mouse Tracking', () => {
+    test('handleWheelEvent sends SGR mouse sequence with coordinates', () => {
+      const handler = new InputHandler(
+        ghostty,
+        container as any,
+        (data) => dataReceived.push(data),
+        () => {
+          bellCalled = true;
+        },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          hasMouseTracking: () => true,
+          hasSgrMouseMode: () => true,
+          getCellDimensions: () => ({ width: 10, height: 20 }),
+          getCanvasOffset: () => ({ left: 0, top: 0 }),
+        }
+      );
+
+      handler.handleWheelEvent(createWheelEvent(-100, { clientX: 15, clientY: 25 }) as any);
+
+      expect(dataReceived).toEqual(['\x1b[<64;2;2M']);
     });
   });
 

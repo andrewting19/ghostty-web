@@ -368,6 +368,48 @@ index 03a883e20..1336676d7 100644
  
          // On Wasm we need to export our allocator convenience functions.
          if (builtin.target.cpu.arch.isWasm()) {
+diff --git a/src/terminal/PageList.zig b/src/terminal/PageList.zig
+index 29f414e03..6b5ab19ab 100644
+--- a/src/terminal/PageList.zig
++++ b/src/terminal/PageList.zig
+@@ -5,6 +5,7 @@ const PageList = @This();
+ 
+ const std = @import("std");
+ const build_options = @import("terminal_options");
++const builtin = @import("builtin");
+ const Allocator = std.mem.Allocator;
+ const assert = @import("../quirks.zig").inlineAssert;
+ const fastmem = @import("../fastmem.zig");
+@@ -338,10 +339,10 @@ fn initPages(
+         const page_buf = try pool.pages.create();
+         // no errdefer because the pool deinit will clean these up
+ 
+-        // In runtime safety modes we have to memset because the Zig allocator
+-        // interface will always memset to 0xAA for undefined. In non-safe modes
+-        // we use a page allocator and the OS guarantees zeroed memory.
+-        if (comptime std.debug.runtime_safety) @memset(page_buf, 0);
++        // On WASM, the allocator reuses freed memory without zeroing, so we must
++        // always zero page buffers. On other platforms, only required with runtime
++        // safety (allocators init to 0xAA); in release the OS guarantees zeroed memory.
++        if (comptime builtin.target.cpu.arch.isWasm() or std.debug.runtime_safety) @memset(page_buf, 0);
+ 
+         // Initialize the first set of pages to contain our viewport so that
+         // the top of the first page is always the active area.
+@@ -2673,9 +2674,11 @@ inline fn createPageExt(
+     else
+         page_alloc.free(page_buf);
+ 
+-    // Required only with runtime safety because allocators initialize
+-    // to undefined, 0xAA.
+-    if (comptime std.debug.runtime_safety) @memset(page_buf, 0);
++    // On WASM, the allocator reuses freed memory without zeroing, so we must
++    // always zero page buffers to prevent stale grapheme/style data from
++    // corrupting the terminal state after a free+realloc cycle.
++    // On other platforms, only required with runtime safety (allocators init to 0xAA).
++    if (comptime builtin.target.cpu.arch.isWasm() or std.debug.runtime_safety) @memset(page_buf, 0);
+ 
+     page.* = .{
+         .data = .initBuf(.init(page_buf), layout),
 diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
 index bc92597f5..d0ee49c1b 100644
 --- a/src/terminal/c/main.zig
@@ -440,7 +482,7 @@ new file mode 100644
 index 000000000..73ae2e6fa
 --- /dev/null
 +++ b/src/terminal/c/terminal.zig
-@@ -0,0 +1,1123 @@
+@@ -0,0 +1,1122 @@
 +//! C API wrapper for Terminal
 +//!
 +//! This provides a minimal, high-performance interface to Ghostty's Terminal
@@ -469,6 +511,8 @@ index 000000000..73ae2e6fa
 +const color = @import("../color.zig");
 +const modespkg = @import("../modes.zig");
 +const point = @import("../point.zig");
++const pagepkg = @import("../page.zig");
++const Page = pagepkg.Page;
 +const Style = @import("../style.zig").Style;
 +const device_status = @import("../device_status.zig");
 +
@@ -821,11 +865,21 @@ index 000000000..73ae2e6fa
 +
 +    const wrapper = alloc.create(TerminalWrapper) catch return null;
 +
-+    // Parse config or use defaults
-+    const scrollback_limit: usize = if (config_) |cfg|
++    // Parse config or use defaults. JS provides a line count; Terminal.init
++    // expects bytes, so convert using the page layout for the current width.
++    const scrollback_lines: usize = if (config_) |cfg|
 +        if (cfg.scrollback_limit == 0) std.math.maxInt(usize) else cfg.scrollback_limit
 +    else
 +        10_000;
++    const scrollback_limit: usize = if (scrollback_lines == std.math.maxInt(usize))
++        std.math.maxInt(usize)
++    else blk: {
++        const cap = pagepkg.std_capacity.adjust(.{ .cols = @intCast(cols) }) catch
++            break :blk scrollback_lines * 1024;
++        const page_size = Page.layout(cap).total_size;
++        const bytes_per_line = page_size / cap.rows;
++        break :blk scrollback_lines * bytes_per_line;
++    };
 +
 +    // Setup terminal colors
 +    var colors = Terminal.Colors.default;
@@ -1022,8 +1076,9 @@ index 000000000..73ae2e6fa
 +    @memset(wrapper.render_state.row_data.items(.dirty), false);
 +}
 +
-+/// Get ALL viewport cells in one call - reads directly from terminal screen buffer.
-+/// This bypasses the RenderState cache to ensure fresh data for all rows.
++/// Get ALL viewport cells in one call.
++/// Uses cached RenderState row pins so viewport rows stay consistent across
++/// page boundaries, matching the native renderer.
 +/// Returns total cells written (rows * cols), or -1 on error.
 +pub fn renderStateGetViewport(
 +    ptr: ?*anyopaque,
@@ -1032,63 +1087,49 @@ index 000000000..73ae2e6fa
 +) callconv(.c) c_int {
 +    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(ptr orelse return -1));
 +    const rs = &wrapper.render_state;
-+    const t = &wrapper.terminal;
 +    const rows = rs.rows;
 +    const cols = rs.cols;
 +    const total: usize = @as(usize, rows) * cols;
 +
 +    if (buf_size < total) return -1;
 +
-+    // Read directly from terminal's active screen, bypassing RenderState cache.
-+    // This ensures we always get fresh data for ALL rows, not just dirty ones.
-+    const pages = &t.screens.active.pages;
++    const default_cell: GhosttyCell = .{
++        .codepoint = 0,
++        .fg_r = rs.colors.foreground.r,
++        .fg_g = rs.colors.foreground.g,
++        .fg_b = rs.colors.foreground.b,
++        .bg_r = rs.colors.background.r,
++        .bg_g = rs.colors.background.g,
++        .bg_b = rs.colors.background.b,
++        .flags = 0,
++        .width = 1,
++        .hyperlink_id = 0,
++    };
++
++    const row_pins = rs.row_data.items(.pin);
 +
 +    var idx: usize = 0;
 +    for (0..rows) |y| {
-+        // Get the row from the active viewport
-+        const pin = pages.pin(.{ .active = .{ .y = @intCast(y) } }) orelse {
-+            // Row doesn't exist, fill with defaults
++        if (y >= row_pins.len) {
 +            for (0..cols) |_| {
-+                out[idx] = .{
-+                    .codepoint = 0,
-+                    .fg_r = rs.colors.foreground.r,
-+                    .fg_g = rs.colors.foreground.g,
-+                    .fg_b = rs.colors.foreground.b,
-+                    .bg_r = rs.colors.background.r,
-+                    .bg_g = rs.colors.background.g,
-+                    .bg_b = rs.colors.background.b,
-+                    .flags = 0,
-+                    .width = 1,
-+                    .hyperlink_id = 0,
-+                };
++                out[idx] = default_cell;
 +                idx += 1;
 +            }
 +            continue;
-+        };
++        }
 +
-+        const cells = pin.cells(.all);
-+        const page = pin.node.data;
++        const row_pin = row_pins[y];
++        const row_cells = row_pin.cells(.all);
++        const page = &row_pin.node.data;
 +
 +        for (0..cols) |x| {
-+            if (x >= cells.len) {
-+                // Past end of row, fill with default
-+                out[idx] = .{
-+                    .codepoint = 0,
-+                    .fg_r = rs.colors.foreground.r,
-+                    .fg_g = rs.colors.foreground.g,
-+                    .fg_b = rs.colors.foreground.b,
-+                    .bg_r = rs.colors.background.r,
-+                    .bg_g = rs.colors.background.g,
-+                    .bg_b = rs.colors.background.b,
-+                    .flags = 0,
-+                    .width = 1,
-+                    .hyperlink_id = 0,
-+                };
++            if (x >= row_cells.len) {
++                out[idx] = default_cell;
 +                idx += 1;
 +                continue;
 +            }
 +
-+            const cell = &cells[x];
++            const cell = &row_cells[x];
 +
 +            // Get style from page styles (cell has style_id)
 +            const sty: Style = if (cell.style_id > 0)

@@ -1709,6 +1709,11 @@ export class Terminal implements ITerminalCore {
       return;
     }
 
+    if (this.wasmTerm?.hasMouseTracking()) {
+      this.inputHandler?.handleWheelEvent(e);
+      return;
+    }
+
     // Check if in alternate screen mode (vim, less, htop, etc.)
     const isAltScreen = this.wasmTerm?.isAlternateScreen() ?? false;
 

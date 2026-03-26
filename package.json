@@ -1,6 +1,6 @@
 {
   "name": "@andrewting19/ghostty-web",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Web-based terminal emulator using Ghostty's VT100 parser via WebAssembly",
   "type": "module",
   "main": "./dist/ghostty-web.umd.cjs",
