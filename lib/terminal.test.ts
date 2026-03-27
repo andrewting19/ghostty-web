@@ -3023,6 +3023,42 @@ describe('Write Behavior', () => {
 
     term.dispose();
   });
+
+  test('render loop pauses during synchronized output and resumes after exit', async () => {
+    if (!container) return;
+
+    const term = await createIsolatedTerminal();
+    term.open(container);
+
+    const renderer = term.renderer!;
+    const originalRender = renderer.render.bind(renderer);
+    let renderCount = 0;
+    renderer.render = ((...args: Parameters<typeof originalRender>) => {
+      renderCount += 1;
+      return originalRender(...args);
+    }) as typeof renderer.render;
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const baselineRenderCount = renderCount;
+    expect(baselineRenderCount).toBeGreaterThan(0);
+
+    term.write('\x1b[?2026h');
+    term.write('\r\r\n'.repeat(200));
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(term.getMode(2026)).toBe(true);
+    expect(renderCount).toBe(baselineRenderCount);
+
+    term.write('\x1b[?2026l\x1b[Hsync-final');
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(term.getMode(2026)).toBe(false);
+    expect(renderCount).toBeGreaterThan(baselineRenderCount);
+
+    term.dispose();
+  });
 });
 
 // ==========================================================================

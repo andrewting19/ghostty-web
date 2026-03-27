@@ -1366,6 +1366,7 @@ export class Terminal implements ITerminalCore {
   private startRenderLoop(): void {
     if (this.animationFrameId) return; // already running
     let consecutiveErrors = 0;
+    let skippedWhileSynchronizedOutput = false;
     const loop = () => {
       if (!this.isDisposed && this.isOpen) {
         try {
@@ -1373,8 +1374,19 @@ export class Terminal implements ITerminalCore {
             this.animationFrameId = requestAnimationFrame(loop);
             return;
           }
+          if (this.wasmTerm.getMode(2026, false)) {
+            skippedWhileSynchronizedOutput = true;
+            this.recordDiagnostic('renderLoop:skipSyncOutput');
+            consecutiveErrors = 0;
+            this.animationFrameId = requestAnimationFrame(loop);
+            return;
+          }
           let cursor!: Cursor;
           this.timeOperation('renderLoop', { viewportY: this.viewportY }, () => {
+            if (skippedWhileSynchronizedOutput) {
+              this.recordDiagnostic('renderLoop:resumeAfterSyncOutput');
+              skippedWhileSynchronizedOutput = false;
+            }
             // Render using WASM's native dirty tracking
             // The render() method:
             // 1. Calls update() once to sync state and check dirty flags
