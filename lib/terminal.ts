@@ -105,6 +105,7 @@ export class Terminal implements ITerminalCore {
   private animationFrameId?: number;
   private writeQueue: Uint8Array[] = [];
   private readonly instanceId: number;
+  private awaitingEcho = false;
 
   // Addons
   private addons: ITerminalAddon[] = [];
@@ -525,6 +526,7 @@ export class Terminal implements ITerminalCore {
           }
           // Clear selection when user types
           this.selectionManager?.clearSelection();
+          this.awaitingEcho = true;
           // Input handler fires data events
           this.dataEmitter.fire(data);
         },
@@ -687,6 +689,16 @@ export class Terminal implements ITerminalCore {
       }
     }, 24);
 
+    // Render the first server response to user input without waiting for the
+    // next animation frame. Keep the pending echo while synchronized output
+    // is active so an intermediate frame is never painted.
+    if (this.awaitingEcho && !this.wasmTerm?.getMode(2026, false)) {
+      this.awaitingEcho = false;
+      if (this.renderer && this.wasmTerm) {
+        this.renderer.render(this.wasmTerm, false, this.viewportY, this, this.scrollbarOpacity);
+      }
+    }
+
     // Render will happen on next animation frame
   }
 
@@ -766,6 +778,8 @@ export class Terminal implements ITerminalCore {
       return;
     }
 
+    this.awaitingEcho = true;
+
     // Check if terminal has bracketed paste mode enabled
     if (this.wasmTerm!.hasBracketedPaste()) {
       // Wrap with bracketed paste sequences (DEC mode 2004)
@@ -791,6 +805,7 @@ export class Terminal implements ITerminalCore {
     }
 
     if (wasUserInput) {
+      this.awaitingEcho = true;
       // Trigger onData event as if user typed it
       this.dataEmitter.fire(data);
     } else {
