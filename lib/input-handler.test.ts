@@ -1034,7 +1034,10 @@ describe('InputHandler', () => {
 
         expect(dataReceived).toEqual(['\x1be']);
       } finally {
-        Object.defineProperty(navigator, 'platform', { configurable: true, value: originalPlatform });
+        Object.defineProperty(navigator, 'platform', {
+          configurable: true,
+          value: originalPlatform,
+        });
       }
     });
   });

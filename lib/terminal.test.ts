@@ -973,7 +973,7 @@ describe('onKey event', () => {
   });
 });
 
-  describe('onTitleChange event', () => {
+describe('onTitleChange event', () => {
   let container: HTMLElement | null = null;
 
   beforeEach(async () => {

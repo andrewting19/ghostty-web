@@ -383,7 +383,8 @@ export class GhosttyTerminal {
   write(data: string | Uint8Array): void {
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
     if (!this.handle || bytes.length === 0) return;
-    if (isGhosttyDebugEnabled()) console.warn('[ghostty] write', bytes.length, 'bytes, handle:', this.handle);
+    if (isGhosttyDebugEnabled())
+      console.warn('[ghostty] write', bytes.length, 'bytes, handle:', this.handle);
     const ptr = this.exports.ghostty_wasm_alloc_u8_array(bytes.length);
     new Uint8Array(this.memory.buffer).set(bytes, ptr);
     this.exports.ghostty_terminal_write(this.handle, ptr, bytes.length);
